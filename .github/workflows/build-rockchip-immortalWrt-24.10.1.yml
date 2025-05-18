@@ -52,11 +52,11 @@ on:
           - xunlong_orangepi-r1-plus
           - xunlong_orangepi-r1-plus-lts
         required: true
-        default: 'friendlyarm_nanopi-r3s'
+        default: 'xunlong_orangepi-5-plus'
       rootfs_partsize:
         description: '设置软件包大小 单位(MB)'
         required: true
-        default: '1024'
+        default: '13736'
       enable_pppoe:
         description: "是否配置PPPoE拨号信息?"
         required: true

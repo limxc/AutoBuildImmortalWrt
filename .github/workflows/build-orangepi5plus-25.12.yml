@@ -1,0 +1,155 @@
+name: Build OrangePi 5 Plus 25.12.x
+
+on:
+  workflow_dispatch:
+    inputs:
+      luci_version:
+        description: "luci版本"
+        required: false
+        default: "25.12.1"
+        type: choice
+        options:
+          - 25.12.0-rc1
+          - 25.12.0-rc2
+          - 25.12.0
+          - 25.12.1
+      custom_router_ip:
+        description: "管理地址 格式:192.168.x.1"
+        required: true
+        default: "192.168.50.1"
+      rootfs_partsize:
+        description: "固件大小(MB)"
+        required: true
+        default: "2048"
+      include_docker:
+        description: "集成 Docker"
+        required: true
+        default: "yes"
+        type: choice
+        options:
+          - "yes"
+          - "no"
+      enable_store:
+        description: "集成 Store 商店"
+        required: false
+        type: boolean
+        default: true
+      enable_pppoe:
+        description: "PPPoE拨号"
+        required: true
+        default: "yes"
+        type: choice
+        options:
+          - "yes"
+          - "no"
+      pppoe_account:
+        description: "宽带账号"
+        required: false
+        default: "053805594319"
+      pppoe_password:
+        description: "宽带密码"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set executable permissions
+        run: chmod +x ${{ github.workspace }}/rockchip/build24.sh
+
+      - name: Save Custom Router IP
+        run: |
+          mkdir -p "${{ github.workspace }}/custom"
+          echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
+          echo "OrangePi 5 Plus 管理地址: ${{ github.event.inputs.custom_router_ip }}"
+
+      - name: Validate PPPoE Inputs
+        run: |
+          if [[ "${{ inputs.enable_pppoe }}" == "yes" ]]; then
+            if [[ -z "${{ inputs.pppoe_account }}" ]]; then
+              echo "Error: PPPoE account must be provided when PPPoE is enabled!"
+              exit 1
+            fi
+          fi
+
+      - name: Enable Store integration
+        run: |
+          if [ "${{ github.event.inputs.enable_store }}" == "true" ]; then
+            echo 'CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-store"' >> shell/apk-custom-packages.sh
+            echo "✅ 已追加 luci-app-store"
+          else
+            echo "❎ 未启用 luci-app-store"
+          fi
+      - name: Check Docker
+        run: |
+          if [[ "${{ inputs.include_docker }}" == "yes" ]]; then
+             echo 'CUSTOM_PACKAGES="$CUSTOM_PACKAGES docker"' >> shell/custom-packages.sh
+             echo "✅ 已为Rockchip平台补充 docker 组件"
+          fi
+
+      - name: Building OrangePi 5 Plus 25.12.x
+        run: |
+          profile="xunlong_orangepi-5-plus"
+          include_docker="${{ github.event.inputs.include_docker }}"
+          rootfs_partsize="${{ github.event.inputs.rootfs_partsize }}"
+          luci_version="${{ github.event.inputs.luci_version }}"
+          echo "Building for profile: $profile"
+          docker run --rm -i \
+              --user root \
+              -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
+              -v "${{ github.workspace }}/files:/home/build/immortalwrt/files" \
+              -v "${{ github.workspace }}/custom:/home/build/immortalwrt/files/etc/config" \
+              -v "${{ github.workspace }}/arch/arch.conf:/home/build/immortalwrt/files/etc/opkg/arch.conf" \
+              -v "${{ github.workspace }}/rockchip/imm25.config:/home/build/immortalwrt/.config" \
+              -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
+              -v "${{ github.workspace }}/rockchip/build25.sh:/home/build/immortalwrt/build.sh" \
+              -e PROFILE=$profile \
+              -e INCLUDE_DOCKER=$include_docker \
+              -e ROOTFS_PARTSIZE=$rootfs_partsize \
+              -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
+              -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
+              -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
+          immortalwrt/imagebuilder:rockchip-armv8-openwrt-${luci_version} /bin/bash /home/build/immortalwrt/build.sh
+
+      - name: Create info
+        run: |
+          cat > ${{ github.workspace }}/router-info.md <<EOF
+          ## OrangePi 5 Plus ImmortalWrt
+
+          - **型号**: xunlong_orangepi-5-plus (RK3588)
+          - **后台地址**: ${{ github.event.inputs.custom_router_ip }}
+          - **用户名**: root
+          - **密码**: 无
+          EOF
+
+          if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
+            echo -e "\n#### 已集成 Docker" >> ${{ github.workspace }}/router-info.md
+          fi
+
+          if [ "${{ github.event.inputs.enable_store }}" == "true" ]; then
+            echo -e "\n#### 已集成 Store 商店" >> ${{ github.workspace }}/router-info.md
+          fi
+
+          if [ "${{ github.event.inputs.enable_pppoe }}" == "yes" ]; then
+            echo -e "\n#### 已配置 PPPoE 拨号" >> ${{ github.workspace }}/router-info.md
+          fi
+
+      - name: Upload ImmortalWrt as release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: OrangePi5Plus-Autobuild
+          name: ImmortalWrt-OrangePi5Plus-25.12
+          body_path: ${{ github.workspace }}/router-info.md
+          files: |
+            ${{ github.workspace }}/bin/targets/rockchip/armv8/*orangepi-5-plus*.img.gz
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
